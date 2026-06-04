@@ -8,6 +8,7 @@ Dependencies: numpy, scipy, psgscoring.constants, psgscoring.utils
 """
 
 from __future__ import annotations
+import logging
 import traceback
 
 import numpy as np
@@ -15,6 +16,8 @@ from scipy.ndimage import label, maximum_filter1d
 
 from .constants import EPOCH_LEN_S
 from .utils import build_sleep_mask, fmt_time, hypno_to_numeric, is_nrem, is_rem, safe_r
+
+logger = logging.getLogger("psgscoring.spo2")
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +216,7 @@ def compute_hypoxic_burden(
     recovery_margin_pct: float = 1.0,
     max_recovery_s: float = 120.0,
     baseline_method: str = "percentile",
+    return_diagnostics: bool = False,
 ) -> dict:
     """
     Compute the hypoxic burden: total area of SpO2 desaturation
@@ -233,6 +237,33 @@ def compute_hypoxic_burden(
         SpO2 must recover to baseline - margin to end integration (default 1%).
     max_recovery_s : float
         Maximum seconds after event end to search for recovery (default 120 s).
+    return_diagnostics : bool
+        If True (default False), the returned dict also contains the
+        diagnostics bundle: a ``per_event`` list with one record per
+        *scored* event (onset_s, duration_s, baseline, area, win_start_s,
+        win_end_s), a ``warnings`` list with one record per silent
+        algorithmic decision (subject- and per-event-level; see
+        ``warnings`` below) and, for the ensemble method, an
+        ``ensemble_data`` dict carrying the ensemble curve, its time
+        axis, and the left/right peak offsets in seconds.
+
+        ``warnings`` entries are dicts of the form
+        ``{'kind': str, 'severity': 'info' | 'warn' | 'error',
+        'event_idx': int | None, 'detail': str, 'data': dict}``.
+        ``event_idx`` (when not None) indexes into the input
+        ``resp_events`` list — *not* into ``per_event``, which only
+        contains successfully scored events. ``detail`` is human-readable
+        prose; ``data`` carries the machine-readable values referenced by
+        ``detail``. Kinds emitted: ``tst_too_short`` (subject, error),
+        ``ensemble_not_enough_events`` (subject, warn),
+        ``event_window_collapsed`` (per-event, info),
+        ``event_too_few_valid_samples`` (per-event, info),
+        ``event_area_zero`` (per-event, info).
+
+        Warnings are *also* emitted through
+        ``logging.getLogger("psgscoring.spo2")`` regardless of this flag,
+        so callers who configure stdlib logging see them without opting
+        into the structured channel.
     baseline_method : str
         Method for computing the per-event SpO2 baseline:
 
@@ -275,6 +306,31 @@ def compute_hypoxic_burden(
         "baseline_method": baseline_method,
     }
 
+    warnings_list = [] if return_diagnostics else None
+
+    def _warn(kind, severity, detail="", event_idx=None, data=None):
+        log_fn = {
+            "info":  logger.info,
+            "warn":  logger.warning,
+            "error": logger.error,
+        }.get(severity, logger.warning)
+        if event_idx is None:
+            log_fn("[hb] %s: %s", kind, detail)
+        else:
+            log_fn("[hb] %s (event %d): %s", kind, event_idx, detail)
+        if warnings_list is None:
+            return
+        warnings_list.append({
+            "kind": kind,
+            "severity": severity,
+            "event_idx": event_idx,
+            "detail": detail,
+            "data": data or {},
+        })
+
+    if return_diagnostics:
+        result["warnings"] = warnings_list
+
     if spo2_data is None or len(resp_events) == 0 or sf_spo2 <= 0:
         return result
 
@@ -287,6 +343,10 @@ def compute_hypoxic_burden(
         sleep_mask = build_sleep_mask(hypno, sf_spo2, n_spo2)
         tst_h = float(np.sum(sleep_mask)) / sf_spo2 / 3600
         if tst_h < 0.1:
+            _warn("tst_too_short", "error",
+                  detail="total sleep time below 0.1 h threshold "
+                         "for hypoxic burden calculation",
+                  data={"tst_h": tst_h, "threshold_h": 0.1})
             return result
 
         # Global baseline (95th pct of sleep SpO2)
@@ -299,13 +359,18 @@ def compute_hypoxic_burden(
         # ── Ensemble method: compute search window ────────────────
         use_ensemble = (baseline_method == "ensemble")
         ens_left_s, ens_right_s = None, None
+        ens_curve, ens_time_axis = None, None
         if use_ensemble:
-            ens_left_s, ens_right_s, _, _ = _ensemble_search_window(
+            ens_left_s, ens_right_s, ens_curve, ens_time_axis = _ensemble_search_window(
                 spo2, sf_spo2, resp_events,
                 pre_s=60.0, post_s=60.0,
             )
             if ens_left_s is None:
                 # Not enough events for ensemble → fall back to percentile
+                _warn("ensemble_not_enough_events", "warn",
+                      detail="fewer than 3 usable events for ensemble; "
+                             "falling back to percentile baseline",
+                      data={"n_events_input": len(resp_events)})
                 use_ensemble = False
                 result["baseline_method"] = "percentile (ensemble fallback)"
             else:
@@ -313,12 +378,13 @@ def compute_hypoxic_burden(
                     safe_r(ens_left_s, 1), safe_r(ens_right_s, 1)
                 ]
 
+        per_event_records = [] if return_diagnostics else None
         total_area = 0.0
         n_burden = 0
 
         _trapz = getattr(np, "trapezoid", getattr(np, "trapz", None))
 
-        for ev in resp_events:
+        for ev_idx, ev in enumerate(resp_events):
             onset_s = float(ev.get("onset_s", 0))
             dur_s = float(ev.get("duration_s", 0))
             if dur_s <= 0:
@@ -335,11 +401,22 @@ def compute_hypoxic_burden(
                 win_start_idx = max(0, int(win_start_s * sf_spo2))
                 win_end_idx = min(n_spo2, int(win_end_s * sf_spo2))
                 if win_start_idx >= win_end_idx:
+                    _warn("event_window_collapsed", "info",
+                          detail="ensemble search window outside signal",
+                          event_idx=ev_idx,
+                          data={"win_start_s": win_start_s,
+                                "win_end_s": win_end_s,
+                                "mode": "ensemble"})
                     continue
 
                 seg = spo2[win_start_idx:win_end_idx].copy()
                 seg_valid = ~np.isnan(seg)
                 if np.sum(seg_valid) < 2:
+                    _warn("event_too_few_valid_samples", "info",
+                          detail=f"{int(np.sum(seg_valid))} valid samples in ensemble window",
+                          event_idx=ev_idx,
+                          data={"n_valid": int(np.sum(seg_valid)),
+                                "mode": "ensemble"})
                     continue
 
                 # Baseline: SpO2 at start of search window (first valid samples)
@@ -354,6 +431,16 @@ def compute_hypoxic_burden(
                 deficit = np.zeros(len(seg))
                 deficit[seg_valid] = np.maximum(0, baseline - seg[seg_valid])
                 area = float(_trapz(deficit, dx=1.0 / sf_spo2))
+
+                if return_diagnostics:
+                    per_event_records.append({
+                        "onset_s": onset_s,
+                        "duration_s": dur_s,
+                        "baseline": baseline,
+                        "area": area,
+                        "win_start_s": win_start_s,
+                        "win_end_s": win_end_s,
+                    })
 
             else:
                 # ── Percentile baseline + recovery window ─────────
@@ -377,6 +464,12 @@ def compute_hypoxic_burden(
                 int_start = int(onset_s * sf_spo2)
                 int_end_max = min(n_spo2, int((event_end_s + max_recovery_s) * sf_spo2))
                 if int_start >= int_end_max:
+                    _warn("event_window_collapsed", "info",
+                          detail="percentile integration window outside signal",
+                          event_idx=ev_idx,
+                          data={"win_start_s": onset_s,
+                                "win_end_s": event_end_s + max_recovery_s,
+                                "mode": "percentile"})
                     continue
 
                 seg = spo2[int_start:int_end_max].copy()
@@ -394,15 +487,35 @@ def compute_hypoxic_burden(
                 seg_area = seg[:recovery_idx].copy()
                 valid = ~np.isnan(seg_area)
                 if np.sum(valid) < 2:
+                    _warn("event_too_few_valid_samples", "info",
+                          detail=f"{int(np.sum(valid))} valid samples in percentile window",
+                          event_idx=ev_idx,
+                          data={"n_valid": int(np.sum(valid)),
+                                "mode": "percentile"})
                     continue
 
                 deficit = np.zeros(len(seg_area))
                 deficit[valid] = np.maximum(0, baseline - seg_area[valid])
                 area = float(_trapz(deficit, dx=1.0 / sf_spo2))
 
+                if return_diagnostics:
+                    per_event_records.append({
+                        "onset_s": onset_s,
+                        "duration_s": dur_s,
+                        "baseline": baseline,
+                        "area": area,
+                        "win_start_s": onset_s,
+                        "win_end_s": onset_s + recovery_idx / sf_spo2,
+                    })
+
             if area > 0:
                 total_area += area
                 n_burden += 1
+            else:
+                _warn("event_area_zero", "info",
+                      detail="window/baseline valid but SpO2 did not dip below baseline",
+                      event_idx=ev_idx,
+                      data={"baseline": baseline, "area": area})
 
         # Normalise: %·s → %·min/h
         burden_pct_min_h = (total_area / 60.0) / tst_h if tst_h > 0 else 0.0
@@ -413,6 +526,16 @@ def compute_hypoxic_burden(
         result["mean_event_burden"] = (
             safe_r(total_area / n_burden, 1) if n_burden > 0 else 0.0
         )
+
+        if return_diagnostics:
+            result["per_event"] = per_event_records
+            if use_ensemble and ens_curve is not None:
+                result["ensemble_data"] = {
+                    "left_offset_s": float(ens_left_s),
+                    "right_offset_s": float(ens_right_s),
+                    "ensemble_curve": np.asarray(ens_curve),
+                    "time_axis": np.asarray(ens_time_axis),
+                }
 
     except Exception as e:
         result["error"] = str(e)
