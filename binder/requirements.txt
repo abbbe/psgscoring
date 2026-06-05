@@ -6,3 +6,6 @@ mne>=1.5,<2
 matplotlib>=3.5
 ipywidgets>=8
 jupyterlab
+# tests/test_golden_output.py (which the notebook imports for CASES,
+# make_raw, hb_by_method) imports pytest at module scope.
+pytest
