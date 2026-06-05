@@ -1,0 +1,7 @@
+#!/bin/bash
+# Binder runs this after installing binder/requirements.txt.
+# postBuild is executed with the repo root as cwd, so `.` refers
+# to the repo root (containing psgscoring/). We install the local
+# package in editable mode so the notebook can `import psgscoring`.
+set -euxo pipefail
+pip install --no-cache-dir -e .

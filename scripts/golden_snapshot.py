@@ -28,7 +28,12 @@ Manifest format (JSON list)
         "edf":     "/data/.../mesa-sleep-0001.edf",   # path to EDF
         "hypno":   "/data/.../0001-hypno.json",       # list[str] json, or .csv/.txt
         "profile": "mesa_shhs",                        # scoring profile
-        "channel_map": {"flow_pressure": "Pres", ...}, # optional manual map
+        "channel_map": {"flow_pressure": "Pres", ..., "spo2": "SaO2"},
+                                                       # optional manual map;
+                                                       # `spo2` key is required
+                                                       # for the hb_by_method
+                                                       # block in the digest
+                                                       # (skipped if absent).
         "arousals": "/data/.../0001-arousals.json"     # optional list[{onset_s,duration_s}]
       },
       ...
@@ -49,7 +54,7 @@ from pathlib import Path
 # Reuse the exact digest + diff logic from the synthetic harness so the two
 # stay in lockstep (single source of truth for the snapshot format).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
-from test_golden_output import summarize, compare  # noqa: E402
+from test_golden_output import summarize, compare, hb_by_method  # noqa: E402
 
 logging.getLogger("psgscoring").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
@@ -86,7 +91,17 @@ def run_recording(rec: dict) -> dict:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         out = psgscoring.run_pneumo_analysis(raw, hypno, **kwargs)
-    return summarize(out)
+    digest = summarize(out)
+    cmap = rec.get("channel_map")
+    if cmap and cmap.get("spo2"):
+        digest["spo2"]["hb_by_method"] = hb_by_method(
+            raw, hypno,
+            out.get("respiratory", {}).get("events", []) or [],
+            cmap,
+        )
+    else:
+        digest["spo2"]["hb_by_method"] = None
+    return digest
 
 
 def build(manifest: list[dict]) -> dict:

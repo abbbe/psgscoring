@@ -257,6 +257,41 @@ def summarize(output: dict) -> dict:
     return digest
 
 
+def hb_by_method(raw, hypno, resp_events, channel_map) -> dict:
+    """Run compute_hypoxic_burden once per registered HB baseline method
+    on the same inputs, returning {method: {hb, warnings_summary}}.
+
+    Used by both the synthetic golden harness (`run_case` below) and
+    the real-EDF snapshot tool (`scripts/golden_snapshot.py`). A
+    future HB method drops in via a one-line append to
+    `psgscoring.spo2.HB_BASELINE_METHODS` — no test changes needed.
+
+    For visual inspection of the method internals (ensemble search
+    window, per-event baseline distribution, synth-vs-detected event
+    alignment), see notebooks/spo2_hb_diagnostics.ipynb.
+    """
+    from psgscoring import compute_hypoxic_burden
+    from psgscoring.spo2 import HB_BASELINE_METHODS
+
+    spo2 = raw.get_data(picks=channel_map["spo2"])[0]
+    sf = raw.info["sfreq"]
+
+    out = {}
+    for m in HB_BASELINE_METHODS:
+        r = compute_hypoxic_burden(
+            spo2, sf, resp_events, hypno,
+            baseline_method=m, return_diagnostics=True,
+        ) or {}
+        warns = r.get("warnings") or []
+        out[m] = {
+            "hb": _r(r.get("hypoxic_burden")),
+            "warnings_summary": dict(sorted(
+                Counter(w["kind"] for w in warns).items()
+            )),
+        }
+    return out
+
+
 def run_case(name: str) -> dict:
     """Build the case, run the pipeline, return its digest."""
     import psgscoring
@@ -271,7 +306,13 @@ def run_case(name: str) -> dict:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         out = psgscoring.run_pneumo_analysis(raw, hypno, **kwargs)
-    return summarize(out)
+    digest = summarize(out)
+    digest["spo2"]["hb_by_method"] = hb_by_method(
+        raw, hypno,
+        out.get("respiratory", {}).get("events", []) or [],
+        cmap,
+    )
+    return digest
 
 
 # ─────────────────────────────────────────────────────────────────────────

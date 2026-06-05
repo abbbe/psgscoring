@@ -119,6 +119,9 @@ def get_desaturation(
 # Hypoxic burden  (Azarbarzin et al., Eur Heart J 2019; AJRCCM 2023)
 # ---------------------------------------------------------------------------
 
+HB_BASELINE_METHODS = ("percentile", "ensemble")
+
+
 def _ensemble_search_window(
     spo2: np.ndarray,
     sf_spo2: float,

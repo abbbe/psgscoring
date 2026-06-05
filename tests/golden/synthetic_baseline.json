@@ -74,6 +74,18 @@
       "success": true
     },
     "spo2": {
+      "hb_by_method": {
+        "ensemble": {
+          "hb": 6.5,
+          "warnings_summary": {
+            "event_area_zero": 2
+          }
+        },
+        "percentile": {
+          "hb": 0.2,
+          "warnings_summary": {}
+        }
+      },
       "hypoxic_burden": 0.2,
       "min_spo2": 91.0,
       "n_desaturations": 5,
@@ -150,6 +162,21 @@
       "success": true
     },
     "spo2": {
+      "hb_by_method": {
+        "ensemble": {
+          "hb": 3.2,
+          "warnings_summary": {
+            "event_area_zero": 2,
+            "event_window_collapsed": 1
+          }
+        },
+        "percentile": {
+          "hb": 6.3,
+          "warnings_summary": {
+            "event_area_zero": 1
+          }
+        }
+      },
       "hypoxic_burden": 6.3,
       "min_spo2": 91.0,
       "n_desaturations": 5,
@@ -226,6 +253,18 @@
       "success": true
     },
     "spo2": {
+      "hb_by_method": {
+        "ensemble": {
+          "hb": 6.5,
+          "warnings_summary": {
+            "event_area_zero": 1
+          }
+        },
+        "percentile": {
+          "hb": 0.2,
+          "warnings_summary": {}
+        }
+      },
       "hypoxic_burden": 0.2,
       "min_spo2": 91.0,
       "n_desaturations": 5,
@@ -302,6 +341,21 @@
       "success": true
     },
     "spo2": {
+      "hb_by_method": {
+        "ensemble": {
+          "hb": 3.2,
+          "warnings_summary": {
+            "event_area_zero": 2,
+            "event_window_collapsed": 1
+          }
+        },
+        "percentile": {
+          "hb": 6.3,
+          "warnings_summary": {
+            "event_area_zero": 1
+          }
+        }
+      },
       "hypoxic_burden": 6.3,
       "min_spo2": 91.0,
       "n_desaturations": 5,
@@ -365,6 +419,18 @@
       "success": true
     },
     "spo2": {
+      "hb_by_method": {
+        "ensemble": {
+          "hb": 0.1,
+          "warnings_summary": {
+            "ensemble_not_enough_events": 1
+          }
+        },
+        "percentile": {
+          "hb": 0.1,
+          "warnings_summary": {}
+        }
+      },
       "hypoxic_burden": 0.1,
       "min_spo2": 91.0,
       "n_desaturations": 5,
@@ -441,6 +507,21 @@
       "success": true
     },
     "spo2": {
+      "hb_by_method": {
+        "ensemble": {
+          "hb": 3.2,
+          "warnings_summary": {
+            "event_area_zero": 2,
+            "event_window_collapsed": 1
+          }
+        },
+        "percentile": {
+          "hb": 6.3,
+          "warnings_summary": {
+            "event_area_zero": 1
+          }
+        }
+      },
       "hypoxic_burden": 6.3,
       "min_spo2": 91.0,
       "n_desaturations": 4,

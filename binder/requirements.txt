@@ -1,0 +1,8 @@
+# Python deps for the Binder build of binder/spo2_hb_diagnostics.ipynb.
+# psgscoring itself is installed by binder/postBuild (pip install -e ..).
+numpy>=1.24
+scipy>=1.10
+mne>=1.5,<2
+matplotlib>=3.5
+ipywidgets>=8
+jupyterlab
